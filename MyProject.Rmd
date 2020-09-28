@@ -1,0 +1,169 @@
+---
+title: "Project Assignament"
+author: "LG"
+date: "27/9/2020"
+output: html_document
+---
+
+This document is the final project for the Coursera “Practical Machine Learning” course. It was produced using RStudio’s Markdown and Knitr.
+
+#Overview
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+
+
+```{r}
+library(knitr)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(randomForest)
+library(RColorBrewer)
+library(gbm)
+library(corrplot)
+```
+
+# Data Descriptions
+
+```{r}
+#The training data for this project are available here:
+train_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+
+#The test data are available here:
+test_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+
+train_in <- read.csv(url(train_url))
+valid_in <- read.csv(url(test_url))
+dim(train_in)
+dim(valid_in)
+```
+
+#Cleaning the input data
+We remove the variables that contains missing values. Note along the cleaning process we display the dimension of the reduced dataset
+
+```{r}
+trainData<- train_in[, colSums(is.na(train_in)) == 0]
+validData <- valid_in[, colSums(is.na(valid_in)) == 0]
+dim(trainData)
+dim(validData)
+
+####
+#We now remove the first seven variables as they have little impact on the outcome classe
+
+trainData <- trainData[, -c(1:7)]
+validData <- validData[, -c(1:7)]
+dim(trainData)
+dim(validData)
+```
+
+#Preparing the datasets for prediction
+Preparing the data for prediction by splitting the training data into 70% as train data and 30% as test data. This splitting will server also to compute the out-of-sample errors.
+
+The test data renamed: valid_in (validate data) will stay as is and will be used later to test the prodction algorithm on the 20 cases.
+
+```{r}
+set.seed(1234) 
+inTrain <- createDataPartition(trainData$classe, p = 0.7, list = FALSE)
+trainData <- trainData[inTrain, ]
+testData <- trainData[-inTrain, ]
+dim(trainData)
+
+dim(testData)
+
+##########
+#Cleaning even further by removing the variables that are near-zero-variance
+
+NZV <- nearZeroVar(trainData)
+trainData <- trainData[, -NZV]
+testData  <- testData[, -NZV]
+dim(trainData)
+dim(testData)
+```
+After this cleaning we are down now to 53 variables
+
+The following correlation plot uses the following parameters (source:CRAN Package ‘corrplot’) “FPC”: the first principal component order. “AOE”: the angular order tl.cex Numeric, for the size of text label (variable names) tl.col The color of text label.
+
+```{r}
+cor_mat <- cor(trainData[, -53])
+corrplot(cor_mat, order = "FPC", method = "color", type = "upper", 
+         tl.cex = 0.8, tl.col = rgb(0, 0, 0))
+highlyCorrelated = findCorrelation(cor_mat, cutoff=0.75)
+names(trainData)[highlyCorrelated]
+```
+
+### Model building
+For this project we will use two different algorithms, classification trees and random forests, to predict the outcome.
+
+1. classification trees
+2. random forests
+3. Generalized Boosted Model
+```{r}
+# We first obtail the model, and then we use the fancyRpartPlot() function to plot the classification tree as a dendogram.
+
+set.seed(12345)
+decisionTreeMod1 <- rpart(classe ~ ., data=trainData, method="class")
+fancyRpartPlot(decisionTreeMod1)
+
+# We then validate the model “decisionTreeModel” on the testData to find out how well it performs by looking at the accuracy variable.
+
+predictTreeMod1 <- predict(decisionTreeMod1, testData, type = "class")
+cmtree <- confusionMatrix(table(predictTreeMod1, testData$classe))
+cmtree
+
+# plot matrix results
+plot(cmtree$table, col = cmtree$byClass, 
+     main = paste("Decision Tree - Accuracy =", 
+                  round(cmtree$overall['Accuracy'], 4)))
+
+```
+```{r}
+#   Prediction with Random Forest
+### We first determine the model
+
+controlRF <- trainControl(method="cv", number=3, verboseIter=FALSE)
+modRF1 <- train(classe ~ ., data=trainData, method="rf", trControl=controlRF)
+modRF1$finalModel
+
+# We then validate the model obtained model “modRF1” on the test data to find out how well it performs by looking at the Accuracy variable.
+
+predictRF1 <- predict(modRF1, newdata=testData)
+cmrf <- confusionMatrix(table(predictRF1, testData$classe))
+cmrf
+
+plot(modRF1)
+
+
+plot(cmrf$table, col = cmrf$byClass, 
+     main = paste("Random Forest Confusion Matrix: Accuracy =", 
+                  round(cmrf$overall['Accuracy'], 4)))
+```
+
+```{r}
+#Prediction with Generalized Boosted Regression Models
+set.seed(12345)
+controlGBM <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+modGBM  <- train(classe ~ ., data=trainData, method = "gbm", 
+                 trControl = controlGBM, verbose = FALSE)
+modGBM$finalModel
+
+## A gradient boosted model with multinomial loss function.
+## 150 iterations were performed.
+## There were 52 predictors of which 42 had non-zero influence.
+
+# print model summary
+print(modGBM)
+
+#Validate the GBM model and
+
+predictGBM <- predict(modGBM, newdata=testData)
+cmGBM <- confusionMatrix(table(predictGBM, testData$classe))
+cmGBM
+```
+
+By comparing the accuracy rate values of the three models, it is clear the the ‘Random Forest’ model is the winner. So will use it on the validation data.
+```{r}
+Results <- predict(modRF1, newdata=validData)
+Results
+```
